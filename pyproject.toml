@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tbas-pipeline"
+version = "0.1.0"
+description = "Local software pipeline for TBAS (no SLURM sbatch generation)."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+tbas-pipeline = "tbas_pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tbas_pipeline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

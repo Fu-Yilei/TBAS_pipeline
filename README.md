@@ -4,29 +4,83 @@ We present Trio-barcoded ONT Adaptive Sampling (TBAS), a cost-efficient long-rea
 
 ## Overview
 
-- The notebook `TBAS_pipeline_slurm.ipynb` walks through running each step of the TBAS pipeline on a SLURM cluster.
+- The software pipeline entrypoint is `tbas-pipeline`, implemented in `tbas_pipeline/`.
+- The software version runs tools directly (no `sbatch` generation).
+- The notebook `TBAS_pipeline_slurm.ipynb` is kept as-is for historical/reference workflow.
 - The `analysis/` folder contains downstream analysis notebooks organized by topic (SNV/Trio calling, coverage, methylation, tandem repeats, and variant counting).
 - Benchmarking materials and example HG002 results are provided under `benchmarking/`, with data available at the Zenodo record below.
 
 ## Requirements
 
-- Access to a SLURM cluster (e.g., via `sbatch`, `squeue`, etc.).
-- A Python environment with Jupyter (JupyterLab or classic notebook).
-- Standard long-read analysis command-line tools as used in the notebooks (e.g., samtools, bcftools, bedtools, mosdepth). Consult the individual notebooks for any tool-specific steps and versions used in your environment.
+- Python 3.9+.
+- Standard long-read analysis command-line tools used by the pipeline:
+  `samtools`, `minimap2`, `sniffles`, `mosdepth`, `run_clair3.sh`,
+  `kanpig`, `bedtools`, `bgzip`, `bcftools`, `whatshap`, `medaka`, `modkit`, `tdb`.
 
 ## Getting started
 
-1. Open this repository in JupyterLab or the classic Jupyter Notebook interface.
-2. Launch and step through `TBAS_pipeline_slurm.ipynb` to run the pipeline on a SLURM cluster.
-	 - Configure any paths to your input data and reference files as indicated in the notebook cells.
-	 - Submit jobs or run commands as instructed by the notebook; monitor them with your normal SLURM tooling.
-3. Use the analysis notebooks described below to perform downstream analyses and summarize results.
+1. Install the local package:
 
-## Run on a SLURM cluster
+```bash
+pip install -e .
+```
 
-- Primary entry point: `TBAS_pipeline_slurm.ipynb`.
-- Assumptions: you have SLURM available on your compute environment, and the necessary tools are installed and visible in your PATH or modules.
-- Tip: If your site uses environment modules, load the appropriate modules at the top of the notebook (or in your kernel startup) before executing the cells.
+2. Create a manifest CSV/TSV with at least:
+- `sample_id` (example: `4_6_Gregor_Trio`)
+- `bed_file` (example: `Epilepsy`, `CMRG`, `WGS`, or a direct BED path)
+- `proband_gender` (used by medaka stages, example: `female`)
+
+Optional columns:
+- `calls_bam` (explicit path to `calls*.bam`; if omitted, the pipeline searches under `<output_folder>/<sample_id>/calls*.bam`)
+- `read_group_prefix` (skip BAM-header inference during demultiplex stage)
+- `tr_bed_file` (TR catalog BED for `medaka_local`; if omitted, the pipeline derives this from `bed_file` via built-in mapping)
+
+3. Run a dry run starting from demultiplexing:
+
+```bash
+tbas-pipeline \
+  --manifest manifest.csv \
+  --output-folder /stornext/snfs170/next-gen/scratch/Yilei/projects/adaptive_sampling/GREGoR_adaptive_sampling \
+  --stages demultiplex \
+  --dry-run
+```
+
+4. Run full pipeline:
+
+```bash
+tbas-pipeline \
+  --manifest manifest.csv \
+  --output-folder /stornext/snfs170/next-gen/scratch/Yilei/projects/adaptive_sampling/GREGoR_adaptive_sampling
+```
+
+## Pipeline stages
+
+Default stage order:
+
+1. `demultiplex`
+2. `fastq_extract`
+3. `minimap2`
+4. `bam_sort`
+5. `sniffles_global`
+6. `bam_mosdepth`
+7. `clair3_local`
+8. `kanpig_pileup`
+9. `kanpig_gt`
+10. `kanpig_trio`
+11. `whatshap_single_sample_local_phasing`
+12. `whatshap_haplotag`
+13. `medaka_local`
+14. `medaka_patho`
+15. `modkit`
+16. `modkit_nohp`
+17. `tdb`
+
+You can run a subset with `--stages stage1,stage2,...`.
+
+## Notebook reference
+
+- `TBAS_pipeline_slurm.ipynb` is preserved and unchanged.
+- Use it as reference for the original SLURM-oriented workflow.
 
 ## Downstream analysis notebooks
 
@@ -72,4 +126,3 @@ If you use these materials, please reference the Zenodo record:
 ## License
 
 This project is distributed under the terms of the license in `LICENSE`.
-

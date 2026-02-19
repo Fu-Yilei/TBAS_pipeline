@@ -1,0 +1,2 @@
+sample_id,bed_file,tr_bed_file,proband_gender,calls_bam
+4_6_Gregor_Trio,example_data/test_subset_chr22/input_regions_cmrg_chr22_42600000_42740000.bed,example_data/test_subset_chr22/tr_regions_adotto_cmrg_chr22_42600000_42740000.bed,female,example_data/test_subset_chr22/4_6_Gregor_Trio/calls_chr22_42600000_42740000.bam
