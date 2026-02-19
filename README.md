@@ -39,8 +39,8 @@ Optional columns:
 
 ```bash
 tbas-pipeline \
-  --manifest manifest.csv \
-  --output-folder /stornext/snfs170/next-gen/scratch/Yilei/projects/adaptive_sampling/GREGoR_adaptive_sampling \
+  --manifest example_data/test_subset_chr22/manifest_example.csv \
+  --output-folder demo_output \
   --stages demultiplex \
   --dry-run
 ```
@@ -49,8 +49,8 @@ tbas-pipeline \
 
 ```bash
 tbas-pipeline \
-  --manifest manifest.csv \
-  --output-folder /stornext/snfs170/next-gen/scratch/Yilei/projects/adaptive_sampling/GREGoR_adaptive_sampling
+  --manifest example_data/test_subset_chr22/manifest_example.csv \
+  --output-folder demo_output
 ```
 
 ## Pipeline stages
