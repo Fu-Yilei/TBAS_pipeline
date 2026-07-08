@@ -4,6 +4,31 @@ This documents the annotation databases and the variant/SV/tandem-repeat ranking
 implemented by the `annovar`, `rank_snv`, `annotsv`, `rank_sv`, and `rank_tr`
 pipeline stages (`tbas_pipeline/ranking.py`).
 
+## Installing the annotation resources
+
+The ranking stages need three external resources beyond the base toolchain:
+
+- **AnnotSV** — installed by `environment.yml` (bioconda). Its annotation files
+  ship with the conda package; if a lookup complains, run the package's
+  `INSTALL_annotations.sh` once.
+- **STRchive** BED — already shipped in this repo
+  (`analysis/tr_regions/strchive/STRchive-disease-loci.hg38.bed`); nothing to
+  install.
+- **ANNOVAR + its databases** — ANNOVAR is registration-gated and not on conda.
+  Register and download it from
+  <https://www.openbioinformatics.org/annovar/annovar_download_form.php>, put its
+  scripts on PATH, then fetch the exact GRCh38 databases below with the helper:
+
+  ```bash
+  scripts/download_annovar_db.sh annovar/humandb
+  # then run the pipeline with:  --annovar-humandb annovar/humandb
+  ```
+
+  (`gnomad41_genome` is tens of GB — allow disk and time.) The `rank_snv`
+  scoring uses only 1000G AF, REVEL, CADD, and ClinVar, so the SNV tiers are
+  unaffected if gnomAD is temporarily absent, but the full protocol is what the
+  annotation stage runs.
+
 ## Small-variant annotation (ANNOVAR)
 
 ANNOVAR (version 2025-03-02) is run on the family (trio) small-variant VCF. The
