@@ -7,7 +7,19 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
+
+from . import ranking
+
+# ANNOVAR annotation databases (GRCh38) used for small-variant ranking, matching
+# the study methods. Kept as constants so the annotation is reproducible; the
+# databases themselves live in the ANNOVAR humandb directory (see settings).
+ANNOVAR_PROTOCOL = (
+    "refGeneWithVer,avsnp151,dbnsfp47a,clinvar_20250721,"
+    "1000g2015aug_all,1000g2015aug_afr,1000g2015aug_amr,1000g2015aug_eas,"
+    "1000g2015aug_eur,1000g2015aug_sas,gnomad41_genome"
+)
+ANNOVAR_OPERATION = "g,f,f,f,f,f,f,f,f,f,f"
 
 BED_FILE_MAP = {
     "Arthrogryposis": "adaptive_regions/annotated/merged/Arthro_2582_padded_top11_manual_annotated.sorted.merged.bed",
@@ -45,6 +57,12 @@ STAGE_ORDER = [
     "modkit",
     "modkit_nohp",
     "tdb",
+    "merge_trio_snv",
+    "annovar",
+    "rank_snv",
+    "annotsv",
+    "rank_sv",
+    "rank_tr",
 ]
 
 # External command-line tools each stage shells out to. Used by
@@ -68,6 +86,12 @@ STAGE_TOOLS: dict[str, tuple[str, ...]] = {
     "modkit": ("modkit",),
     "modkit_nohp": ("modkit",),
     "tdb": ("tdb",),
+    "merge_trio_snv": ("bcftools", "tabix"),
+    "annovar": ("table_annovar.pl",),
+    "rank_snv": (),          # pure-Python ranking, no external tool
+    "annotsv": ("AnnotSV",),
+    "rank_sv": (),           # pure-Python filtering
+    "rank_tr": (),           # pure-Python trio comparison
 }
 
 
@@ -92,6 +116,13 @@ class PipelineSettings:
     kit_name: str = "SQK-NBD114-96"
     clair3_model: Path = Path("clair3/bin/models/r1041_e82_400bps_sup_v520")
     adotto_pheno: Path = Path("adaptive_regions/patho_tr/adotto_pheno.bed")
+    # Annotation / ranking settings (see the annovar/annotsv/rank_* stages).
+    annovar_humandb: Path = Path("annovar/humandb")
+    annovar_buildver: str = "hg38"
+    annotsv_build: str = "GRCh38"
+    strchive_bed: Path = Path(
+        "analysis/tr_regions/strchive/STRchive-disease-loci.hg38.bed"
+    )
 
 
 class CommandRunner:
@@ -245,6 +276,12 @@ class TBASPipeline:
             "modkit": self._stage_modkit,
             "modkit_nohp": self._stage_modkit_nohp,
             "tdb": self._stage_tdb,
+            "merge_trio_snv": self._stage_merge_trio_snv,
+            "annovar": self._stage_annovar,
+            "rank_snv": self._stage_rank_snv,
+            "annotsv": self._stage_annotsv,
+            "rank_sv": self._stage_rank_sv,
+            "rank_tr": self._stage_rank_tr,
         }
 
     @classmethod
@@ -694,3 +731,111 @@ class TBASPipeline:
                     f"-s {_quote(sample_tag)}"
                 )
                 self.runner.run(command)
+
+    # --- annotation + ranking -------------------------------------------- #
+    def _run_python(self, description: str, func: Callable[[], object]) -> None:
+        """Run an in-process ranking step, honoring print/dry-run like a command."""
+        if self.runner.print_commands:
+            print(f"# python: {description}")
+        if self.runner.dry_run:
+            return
+        func()
+
+    def _snv_merged_vcf(self, sample_dir: Path, sample_id: str) -> Path:
+        return sample_dir / f"{sample_id}.snv.merged.vcf.gz"
+
+    def _annovar_multianno(self, sample_dir: Path, sample_id: str) -> Path:
+        build = self.settings.annovar_buildver
+        return sample_dir / f"{sample_id}.snv.merged.{build}_multianno.txt"
+
+    def _stage_merge_trio_snv(self) -> None:
+        stage = "merge_trio_snv"
+        for row in self.rows:
+            sample_id = self._require(row, "sample_id", stage)
+            sample_dir = self._sample_dir(sample_id)
+            trio = self._trio_barcodes(sample_id)
+            clair3_vcfs = [
+                sample_dir / f"{sample_id}_{bc}_clair3_local/merge_output.vcf.gz"
+                for bc in trio
+            ]
+            output_vcf = self._snv_merged_vcf(sample_dir, sample_id)
+            inputs = " ".join(_quote(v) for v in clair3_vcfs)  # proband, mother, father
+            self.runner.run(f"bcftools merge -0 -Oz -o {_quote(output_vcf)} {inputs}")
+            self.runner.run(f"tabix -f -p vcf {_quote(output_vcf)}")
+
+    def _stage_annovar(self) -> None:
+        stage = "annovar"
+        for row in self.rows:
+            sample_id = self._require(row, "sample_id", stage)
+            sample_dir = self._sample_dir(sample_id)
+            merged_vcf = self._snv_merged_vcf(sample_dir, sample_id)
+            out_prefix = sample_dir / f"{sample_id}.snv.merged"
+            command = (
+                f"table_annovar.pl {_quote(merged_vcf)} "
+                f"{_quote(self.settings.annovar_humandb)} -buildver "
+                f"{_quote(self.settings.annovar_buildver)} -out {_quote(out_prefix)} "
+                f"-remove -protocol {ANNOVAR_PROTOCOL} -operation {ANNOVAR_OPERATION} "
+                f"-nastring . -vcfinput -polish"
+            )
+            self.runner.run(command)
+
+    def _stage_rank_snv(self) -> None:
+        stage = "rank_snv"
+        for row in self.rows:
+            sample_id = self._require(row, "sample_id", stage)
+            sample_dir = self._sample_dir(sample_id)
+            multianno = self._annovar_multianno(sample_dir, sample_id)
+            output_tsv = sample_dir / f"{sample_id}.snv.ranked.tsv"
+            self._run_python(
+                f"rank_snvs {multianno} -> {output_tsv}",
+                lambda m=multianno, o=output_tsv: ranking.rank_snvs(m, o),
+            )
+
+    def _stage_annotsv(self) -> None:
+        stage = "annotsv"
+        for row in self.rows:
+            sample_id = self._require(row, "sample_id", stage)
+            sample_dir = self._sample_dir(sample_id)
+            for barcode in self._trio_barcodes(sample_id):
+                sv_vcf = sample_dir / f"{sample_id}_{barcode}_global.germline.vcf.gz"
+                output_tsv = sample_dir / f"{sample_id}_{barcode}.annotsv.tsv"
+                # -outputDir must be given explicitly; with only a relative
+                # -outputFile, AnnotSV writes to a dated subdir and exits non-zero.
+                command = (
+                    f"AnnotSV -SVinputFile {_quote(sv_vcf)} "
+                    f"-outputDir {_quote(sample_dir)} -outputFile {_quote(output_tsv)} "
+                    f"-genomeBuild {_quote(self.settings.annotsv_build)}"
+                )
+                self.runner.run(command)
+
+    def _stage_rank_sv(self) -> None:
+        stage = "rank_sv"
+        for row in self.rows:
+            sample_id = self._require(row, "sample_id", stage)
+            sample_dir = self._sample_dir(sample_id)
+            for barcode in self._trio_barcodes(sample_id):
+                annotsv_tsv = sample_dir / f"{sample_id}_{barcode}.annotsv.tsv"
+                output_tsv = sample_dir / f"{sample_id}_{barcode}.sv.pathogenic.tsv"
+                self._run_python(
+                    f"filter_svs {annotsv_tsv} -> {output_tsv}",
+                    lambda a=annotsv_tsv, o=output_tsv: ranking.filter_svs(a, o),
+                )
+
+    def _stage_rank_tr(self) -> None:
+        stage = "rank_tr"
+        for row in self.rows:
+            sample_id = self._require(row, "sample_id", stage)
+            sample_dir = self._sample_dir(sample_id)
+            trio = self._trio_barcodes(sample_id)
+            tr_vcfs = [
+                sample_dir / f"{sample_id}_{bc}_tr/medaka_to_ref.TR.vcf" for bc in trio
+            ]
+            output_tsv = sample_dir / f"{sample_id}.tr.trio_distinct.tsv"
+            strchive = self.settings.strchive_bed
+            strchive_arg = strchive if Path(strchive).exists() else None
+            proband, mother, father = tr_vcfs[0], tr_vcfs[1], tr_vcfs[2]
+            self._run_python(
+                f"rank_tandem_repeats (trio) -> {output_tsv}",
+                lambda p=proband, m=mother, f=father, o=output_tsv, s=strchive_arg:
+                    ranking.rank_tandem_repeats(p, m, f, o, strchive_bed=s),
+            )

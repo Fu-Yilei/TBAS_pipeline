@@ -79,6 +79,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pathogenic TR BED used by medaka_patho stage.",
     )
     parser.add_argument(
+        "--annovar-humandb",
+        type=Path,
+        default=Path("annovar/humandb"),
+        help="ANNOVAR humandb directory (annotation databases) for the annovar stage.",
+    )
+    parser.add_argument(
+        "--annovar-buildver",
+        default="hg38",
+        help="ANNOVAR genome build (default: hg38).",
+    )
+    parser.add_argument(
+        "--annotsv-build",
+        default="GRCh38",
+        help="AnnotSV genome build (default: GRCh38).",
+    )
+    parser.add_argument(
+        "--strchive-bed",
+        type=Path,
+        default=Path("analysis/tr_regions/strchive/STRchive-disease-loci.hg38.bed"),
+        help="STRchive pathogenic-repeat BED used by the rank_tr stage.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print commands only, without executing.",
@@ -137,6 +159,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         kit_name=args.kit_name,
         clair3_model=args.clair3_model,
         adotto_pheno=args.adotto_pheno,
+        annovar_humandb=args.annovar_humandb,
+        annovar_buildver=args.annovar_buildver,
+        annotsv_build=args.annotsv_build,
+        strchive_bed=args.strchive_bed,
     )
     runner = CommandRunner(dry_run=args.dry_run, print_commands=not args.quiet)
     pipeline = TBASPipeline.from_manifest(settings, runner=runner)
