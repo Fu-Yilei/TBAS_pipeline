@@ -1,5 +1,6 @@
 """TBAS local software pipeline."""
 
+from . import ranking
 from .pipeline import (
     STAGE_ORDER,
     STAGE_TOOLS,
@@ -25,5 +26,6 @@ __all__ = [
     "load_manifest",
     "parse_readgroup_prefix_from_header",
     "parse_sample_barcodes",
+    "ranking",
     "required_tools",
 ]

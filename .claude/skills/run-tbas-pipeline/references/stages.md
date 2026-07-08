@@ -24,6 +24,17 @@ what `--stages` expects.
 | 15 | `modkit` | Methylation pileup, phased | `*_modkit/*.HP.bed` |
 | 16 | `modkit_nohp` | Methylation pileup, unphased | `*_modkit/*.bed` |
 | 17 | `tdb` | Build tandem-repeat database | `*_tr/*.tdb` |
+| 18 | `merge_trio_snv` | Merge the trio's small variants (proband first) | `*.snv.merged.vcf.gz` |
+| 19 | `annovar` | Annotate small variants (ANNOVAR) | `*.snv.merged.hg38_multianno.txt` |
+| 20 | `rank_snv` | Tier & rank SNVs (Tier 1–4) | `*.snv.ranked.tsv` |
+| 21 | `annotsv` | Annotate structural variants (AnnotSV) | `*.annotsv.tsv` |
+| 22 | `rank_sv` | Keep (likely) pathogenic SVs | `*.sv.pathogenic.tsv` |
+| 23 | `rank_tr` | Trio tandem-repeat comparison (proband vs parents) | `*.tr.trio_distinct.tsv` |
+
+Stages 18–23 are the annotation/ranking layer (see `METHODS.md`). They need
+extra tools/resources: ANNOVAR (`table_annovar.pl` + a humandb directory,
+`--annovar-humandb`), AnnotSV, and a STRchive BED (`--strchive-bed`). If a site
+does not have these, run `--stages` up to `tdb` and do ranking separately.
 
 ## Dependency notes
 

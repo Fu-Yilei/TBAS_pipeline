@@ -43,5 +43,11 @@ dependencies:
   - whatshap        # phasing / haplotagging
   - medaka >=2.2    # tandem-repeat consensus (medaka_local/patho)
   - ont-modkit      # methylation pileup (modkit/modkit_nohp); binary: modkit
+  - annotsv         # structural-variant annotation (annotsv/rank_sv stages)
+  # NOTE: ANNOVAR (for the annovar/rank_snv stages) is not on conda — it is
+  # registration-gated. Install it separately, then fetch its GRCh38 databases
+  # with scripts/download_annovar_db.sh. AnnotSV's own annotation files ship
+  # with the conda package; if a locus lookup complains, run its
+  # INSTALL_annotations.sh once. See METHODS.md.
   - pip:
       - git+https://github.com/ACEnglish/tdb.git   # tandem-repeat database (tdb)

@@ -16,14 +16,15 @@ TBAS is not only a cheaper way to sequence trios — its analytical approach is
 co-designed with long-read sequencing (LRS) to extract signal that short-read
 trio pipelines cannot. Three points are novel:
 
-1. **Automated, phenotype-guided trio variant ranking.** Small and structural
-   variants are called per trio member and genotyped *trio-aware* (`kanpig
-   trio`), then annotated (ANNOVAR functional/population annotation) and ranked
-   by combining that annotation with the trio inheritance pattern — de novo,
-   recessive/compound-heterozygous, and phenotype (HPO) fit — so candidate
-   diagnoses surface automatically rather than by manual review. Because reads
-   are natively phased on a single flow cell, compound-heterozygous and
-   parent-of-origin calls are made directly instead of inferred.
+1. **Automated trio variant ranking (built into the pipeline).** Small and
+   structural variants are called per trio member and genotyped *trio-aware*
+   (`kanpig trio`), then annotated (ANNOVAR for SNVs, AnnotSV for SVs) and
+   ranked by the `rank_snv`/`rank_sv` stages: a four-tier SNV system that
+   combines allele frequency, REVEL/CADD, ClinVar, and the trio inheritance
+   pattern (de novo, recessive, compound-heterozygous), plus pathogenic SV
+   filtering. Because reads are natively phased on a single flow cell,
+   compound-heterozygous and parent-of-origin calls are made directly instead of
+   inferred. See `METHODS.md` for the exact databases and tiering rules.
 
 2. **DNA methylation from LRS as an independent marker of pathogenic
    expansions — including from adaptive-sampling *rejected* reads.** TBAS
@@ -121,9 +122,6 @@ tbas-pipeline \
   --output-folder demo_output
 ```
 
-See `OPTIMIZATION_PLAN.md` for a roadmap toward a fully push-button, clinically
-deployable install (containers, pinned environments, resumability).
-
 ## Example data
 
 Two real-data bundles under `example_data/` (subsets of the `4_6_Gregor_Trio`
@@ -160,8 +158,22 @@ Default stage order:
 15. `modkit`
 16. `modkit_nohp`
 17. `tdb`
+18. `merge_trio_snv` — merge the trio's small-variant VCFs (proband first)
+19. `annovar` — annotate small variants (ANNOVAR)
+20. `rank_snv` — tier and rank SNVs → `<sample>.snv.ranked.tsv`
+21. `annotsv` — annotate structural variants (AnnotSV)
+22. `rank_sv` — keep (likely) pathogenic SVs → `<sample>_<barcode>.sv.pathogenic.tsv`
+23. `rank_tr` — trio tandem-repeat comparison → `<sample>.tr.trio_distinct.tsv`
 
 You can run a subset with `--stages stage1,stage2,...`.
+
+The annotation/ranking stages (18–23) turn raw calls into ranked candidates: an
+ANNOVAR-based SNV tiering system, AnnotSV pathogenic SV filtering, and a
+STRchive-restricted trio tandem-repeat comparison that flags proband repeat
+alleles distinct from both parents. They need ANNOVAR (`table_annovar.pl` + a
+humandb directory), AnnotSV, and a STRchive BED — configured via
+`--annovar-humandb`, `--annotsv-build`, and `--strchive-bed`. See `METHODS.md`
+for the exact databases, tiering rules, and filtering criteria.
 
 ## Notebook reference
 
