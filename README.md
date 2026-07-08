@@ -10,22 +10,90 @@ We present Trio-barcoded ONT Adaptive Sampling (TBAS), a cost-efficient long-rea
 - The `analysis/` folder contains downstream analysis notebooks organized by topic (SNV/Trio calling, coverage, methylation, tandem repeats, and variant counting).
 - Benchmarking materials and example HG002 results are provided under `benchmarking/`, with data available at the Zenodo record below.
 
+## Analytical novelty
+
+TBAS is not only a cheaper way to sequence trios — its analytical approach is
+co-designed with long-read sequencing (LRS) to extract signal that short-read
+trio pipelines cannot. Three points are novel:
+
+1. **Automated, phenotype-guided trio variant ranking.** Small and structural
+   variants are called per trio member and genotyped *trio-aware* (`kanpig
+   trio`), then annotated (ANNOVAR functional/population annotation) and ranked
+   by combining that annotation with the trio inheritance pattern — de novo,
+   recessive/compound-heterozygous, and phenotype (HPO) fit — so candidate
+   diagnoses surface automatically rather than by manual review. Because reads
+   are natively phased on a single flow cell, compound-heterozygous and
+   parent-of-origin calls are made directly instead of inferred.
+
+2. **DNA methylation from LRS as an independent marker of pathogenic
+   expansions — including from adaptive-sampling *rejected* reads.** TBAS
+   preserves native 5mC/5hmC modification tags end to end (methylation tags are
+   carried through read extraction and emitted as phased and unphased pileups by
+   `modkit`). Locus hypermethylation is then used as an orthogonal signal for
+   repeat-expansion disorders even where the expansion is not fully spanned. To
+   our knowledge this is the first approach to combine LRS methylation with
+   adaptive sampling to flag pathogenic expansions such as **NAXE** and
+   **DIP2B**, notably by recovering methylation signal from reads that adaptive
+   sampling *rejected* (unblocked/off-target) rather than discarding them
+   (worked examples in `analysis/methylation/`).
+
+3. **Trio-aware tandem-repeat length comparison.** Long reads span full repeat
+   alleles, so `medaka tandem` resolves per-sample allele lengths and `tdb`
+   collates the proband and both parents into one database. This lets the
+   pipeline compare repeat length *across the trio* directly and flag a proband
+   allele that is expanded relative to the parents (de novo expansion or further
+   somatic/germline expansion) — a comparison prior tandem-repeat pipelines,
+   built for single samples, did not make. See the `patho_ATN1_FGF14` example
+   (ATN1/DRPLA `CAG`, FGF14/SCA27B `GAA`).
+
+Together these turn TBAS's LRS strengths — native methylation, read phasing,
+full-length repeat spanning, and the trio structure itself — into diagnostic
+evidence, at a fraction of the cost of running trios on separate flow cells.
+
 ## Requirements
 
-- Python 3.9+.
+- Python 3.10+.
 - Standard long-read analysis command-line tools used by the pipeline:
   `samtools`, `minimap2`, `sniffles`, `mosdepth`, `run_clair3.sh`,
   `kanpig`, `bedtools`, `bgzip`, `bcftools`, `whatshap`, `medaka`, `modkit`, `tdb`.
 
+The easiest way to get all of these is the bundled conda environment (see
+below), which installs the whole toolchain in one command.
+
 ## Getting started
 
-1. Install the local package:
+1. Install the external tools and the package into a single self-contained
+   environment. With micromamba (or swap `micromamba` for `mamba`/`conda`):
+
+```bash
+micromamba env create -f environment.yml
+micromamba activate tbas
+pip install -e .
+```
+
+This one environment provides the entire toolchain (samtools, minimap2,
+sniffles, mosdepth, Clair3, kanpig, bedtools, bcftools, whatshap, medaka,
+modkit, tdb) — no separate per-tool envs or from-source builds. `tdb` installs
+from GitHub via pip as declared in `environment.yml`. For a byte-for-byte
+reproducible environment, create from the pinned `environment.lock.yml` instead.
+
+Or, if the command-line tools are already on your `PATH`, just:
 
 ```bash
 pip install -e .
 ```
 
-2. Create a manifest CSV/TSV with at least:
+2. Verify the toolchain is complete before running:
+
+```bash
+tbas-pipeline --manifest example_data/test_subset_chr22/manifest_example.csv --check-deps
+```
+
+This lists the tools required by the selected stages and reports any that are
+missing from `PATH`. A real run also performs this check automatically and
+aborts early if a tool is missing (pass `--skip-dep-check` to override).
+
+3. Create a manifest CSV/TSV with at least:
 - `sample_id` (example: `4_6_Gregor_Trio`)
 - `bed_file` (example: `Epilepsy`, `CMRG`, `WGS`, or a direct BED path)
 - `proband_gender` (used by medaka stages, example: `female`)
@@ -35,7 +103,7 @@ Optional columns:
 - `read_group_prefix` (skip BAM-header inference during demultiplex stage)
 - `tr_bed_file` (TR catalog BED for `medaka_local`; if omitted, the pipeline derives this from `bed_file` via built-in mapping)
 
-3. Run a dry run starting from demultiplexing:
+4. Run a dry run starting from demultiplexing:
 
 ```bash
 tbas-pipeline \
@@ -45,13 +113,31 @@ tbas-pipeline \
   --dry-run
 ```
 
-4. Run full pipeline:
+5. Run full pipeline:
 
 ```bash
 tbas-pipeline \
   --manifest example_data/test_subset_chr22/manifest_example.csv \
   --output-folder demo_output
 ```
+
+See `OPTIMIZATION_PLAN.md` for a roadmap toward a fully push-button, clinically
+deployable install (containers, pinned environments, resumability).
+
+## Example data
+
+Two real-data bundles under `example_data/` (subsets of the `4_6_Gregor_Trio`
+sample) let you smoke-test the pipeline end to end:
+
+- `example_data/test_subset_chr22/` — CMRG genes on `chr22:42.6-42.74 Mb`.
+  Exercises stages 1-16 fully; `medaka_patho` is skipped because this window
+  contains no known pathogenic STR loci.
+- `example_data/patho_ATN1_FGF14/` — windows around **ATN1** (DRPLA, `CAG`) and
+  **FGF14** (SCA27B, `GAA`). These loci are in the pathogenic catalog, so this
+  bundle also exercises `medaka_patho` and `tdb` on real disease repeats.
+
+Both runs need a GRCh38 reference, a Clair3 model directory, and the pathogenic
+TR BED, passed via `--reference`, `--clair3-model`, and `--adotto-pheno`.
 
 ## Pipeline stages
 

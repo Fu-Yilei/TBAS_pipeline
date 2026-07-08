@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Sequence
 
-from .pipeline import CommandRunner, PipelineSettings, STAGE_ORDER, TBASPipeline
+from .pipeline import (
+    CommandRunner,
+    PipelineSettings,
+    STAGE_ORDER,
+    TBASPipeline,
+    check_dependencies,
+    required_tools,
+)
 
 
 def _parse_stages(value: str) -> list[str]:
@@ -80,12 +88,47 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not print commands before execution.",
     )
+    parser.add_argument(
+        "--check-deps",
+        action="store_true",
+        help=(
+            "Check that all external tools required by the selected stages are "
+            "on PATH, report the result, and exit without running the pipeline."
+        ),
+    )
+    parser.add_argument(
+        "--skip-dep-check",
+        action="store_true",
+        help="Skip the preflight tool check that runs before a real execution.",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    stages = args.stages
+    missing = check_dependencies(stages)
+
+    if args.check_deps:
+        print(f"Required tools for selected stages: {', '.join(required_tools(stages))}")
+        if missing:
+            print(f"MISSING from PATH: {', '.join(missing)}")
+            return 1
+        print("All required tools were found on PATH.")
+        return 0
+
+    # Fail fast before a long run if a real execution is missing a tool.
+    if missing and not args.dry_run and not args.skip_dep_check:
+        print(
+            "Error: the following required tools are not on PATH: "
+            f"{', '.join(missing)}.\n"
+            "Install them (see environment.yml) or pass --skip-dep-check to "
+            "override.",
+            file=sys.stderr,
+        )
+        return 1
 
     settings = PipelineSettings(
         manifest=args.manifest,
@@ -97,7 +140,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     runner = CommandRunner(dry_run=args.dry_run, print_commands=not args.quiet)
     pipeline = TBASPipeline.from_manifest(settings, runner=runner)
-    pipeline.run(args.stages)
+    pipeline.run(stages)
     return 0
 
 

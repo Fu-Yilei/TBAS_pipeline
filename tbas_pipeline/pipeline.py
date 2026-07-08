@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import re
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,42 @@ STAGE_ORDER = [
     "modkit_nohp",
     "tdb",
 ]
+
+# External command-line tools each stage shells out to. Used by
+# check_dependencies() for a fail-fast preflight so a multi-hour run does not
+# abort halfway through because one tool is missing from PATH.
+STAGE_TOOLS: dict[str, tuple[str, ...]] = {
+    "demultiplex": ("samtools",),
+    "fastq_extract": ("samtools",),
+    "minimap2": ("minimap2",),
+    "bam_sort": ("samtools",),
+    "sniffles_global": ("sniffles",),
+    "bam_mosdepth": ("mosdepth",),
+    "clair3_local": ("run_clair3.sh",),
+    "kanpig_pileup": ("kanpig", "bedtools", "bgzip", "tabix"),
+    "kanpig_gt": ("kanpig", "bcftools"),
+    "kanpig_trio": ("kanpig", "bcftools"),
+    "whatshap_single_sample_local_phasing": ("whatshap", "tabix"),
+    "whatshap_haplotag": ("whatshap", "samtools"),
+    "medaka_local": ("medaka",),
+    "medaka_patho": ("medaka", "bedtools"),
+    "modkit": ("modkit",),
+    "modkit_nohp": ("modkit",),
+    "tdb": ("tdb",),
+}
+
+
+def required_tools(stages: Sequence[str]) -> list[str]:
+    """Return the sorted set of external tools needed for the given stages."""
+    tools: set[str] = set()
+    for stage in stages:
+        tools.update(STAGE_TOOLS.get(stage, ()))
+    return sorted(tools)
+
+
+def check_dependencies(stages: Sequence[str]) -> list[str]:
+    """Return the tools required by ``stages`` that are missing from PATH."""
+    return [tool for tool in required_tools(stages) if shutil.which(tool) is None]
 
 
 @dataclass(frozen=True)
@@ -550,6 +587,34 @@ class TBASPipeline:
                 )
                 self.runner.run(command)
 
+    def _resolve_patho_bed(self, row: dict[str, str], sample_dir: Path) -> Path | None:
+        """Pathogenic-TR BED to genotype for this sample.
+
+        Adaptive sampling only produces coverage over the target regions, so a
+        pathogenic locus outside the panel has no reads. Running ``medaka
+        tandem`` on such loci does not just waste time -- it aborts the whole
+        stage with "failed to generate a consensus sequence". We therefore
+        restrict the genome-wide pathogenic catalog to the sample's target
+        regions (``bed_file``). If nothing overlaps, return ``None`` so the
+        caller can skip the stage cleanly instead of crashing. When no target
+        BED is available (e.g. WGS), fall back to the full catalog unchanged.
+        """
+        full_pheno = self.settings.adotto_pheno
+        target = _resolve_bed_path(row.get("bed_file", "").strip())
+        if not target or not Path(target).exists():
+            return full_pheno
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        restricted = sample_dir / "pheno_tr_in_target.bed"
+        self.runner.run(
+            f"bedtools intersect -u -a {_quote(full_pheno)} "
+            f"-b {_quote(target)} > {_quote(restricted)}"
+        )
+        if self.runner.dry_run:
+            return restricted
+        if not restricted.exists() or restricted.stat().st_size == 0:
+            return None
+        return restricted
+
     def _stage_medaka_patho(self) -> None:
         stage = "medaka_patho"
         threads = 10
@@ -558,6 +623,13 @@ class TBASPipeline:
             sample_id = self._require(row, "sample_id", stage)
             proband_gender = self._require(row, "proband_gender", stage).lower()
             sample_dir = self._sample_dir(sample_id)
+            patho_bed = self._resolve_patho_bed(row, sample_dir)
+            if patho_bed is None:
+                print(
+                    f"[medaka_patho] No pathogenic TR loci fall within the target "
+                    f"regions for sample_id={sample_id}; skipping stage."
+                )
+                continue
             for barcode in self._trio_barcodes(sample_id):
                 sample_tag = self._sample_tag(sample_id, barcode)
                 input_bam = sample_dir / f"{sample_id}_{barcode}.HP.bam"
@@ -567,7 +639,7 @@ class TBASPipeline:
                     f"medaka tandem --workers {threads} --ignore_read_groups "
                     f"--model {_quote(model)} --phasing prephased --sample_name "
                     f"{_quote(sample_tag)} {_quote(input_bam)} "
-                    f"{_quote(self.settings.reference)} {_quote(self.settings.adotto_pheno)} "
+                    f"{_quote(self.settings.reference)} {_quote(patho_bed)} "
                     f"{_quote(proband_gender)} {_quote(output_tr)}"
                 )
                 self.runner.run(command)
