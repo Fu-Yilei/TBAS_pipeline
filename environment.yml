@@ -1,0 +1,47 @@
+# Self-contained conda/mamba/micromamba environment for the TBAS pipeline.
+#
+# Goal: a single `tbas` environment that provides every external command-line
+# tool the pipeline shells out to, so a user goes from zero to a working install
+# without building tools from source or reconstructing several separate envs:
+#
+#     micromamba env create -f environment.yml     # or: mamba env create -f ...
+#     micromamba activate tbas
+#     pip install -e .
+#     tbas-pipeline --check-deps                    # verify all tools on PATH
+#
+# Notes on package names / sources (verified against bioconda):
+#   - modkit is published on bioconda as `ont-modkit` (binary is still `modkit`).
+#   - tdb is not on bioconda or PyPI; it installs from GitHub via pip (below).
+#   - medaka >=2.2 is REQUIRED: medaka 2.1.x crashes under NumPy >=2.0
+#     ("np.compat was removed") and silently produces an empty TR VCF, which
+#     then breaks the downstream tdb stage. See OPTIMIZATION_PLAN.md.
+#
+# Two models are hardcoded in the pipeline and must match the installed tools:
+#   - Clair3 model: r1041_e82_400bps_sup_v520
+#   - medaka model: dna_r10.4.1_e8.2_400bps_sup@v5.2.0
+#
+# For clinical / reproducible use, freeze exact versions after creating the env:
+#   micromamba env export -n tbas > environment.lock.yml
+name: tbas
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python >=3.10
+  - pip
+  # --- alignment / BAM handling ---
+  - samtools
+  - minimap2
+  - htslib          # provides bgzip and tabix
+  - bedtools
+  - bcftools
+  # --- variant / SV / repeat / methylation callers ---
+  - sniffles >=2.2  # SV calling (sniffles_global)
+  - mosdepth        # coverage (bam_mosdepth)
+  - clair3          # small-variant calling (clair3_local); ships run_clair3.sh
+  - kanpig          # SV genotyping (kanpig_pileup/gt/trio)
+  - whatshap        # phasing / haplotagging
+  - medaka >=2.2    # tandem-repeat consensus (medaka_local/patho)
+  - ont-modkit      # methylation pileup (modkit/modkit_nohp); binary: modkit
+  - pip:
+      - git+https://github.com/ACEnglish/tdb.git   # tandem-repeat database (tdb)

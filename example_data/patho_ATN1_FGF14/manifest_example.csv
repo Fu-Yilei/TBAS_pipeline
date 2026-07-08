@@ -1,0 +1,2 @@
+sample_id,bed_file,tr_bed_file,proband_gender,calls_bam
+4_6_Gregor_Trio,example_data/patho_ATN1_FGF14/input_regions_patho_ATN1_FGF14.bed,example_data/patho_ATN1_FGF14/tr_regions_adotto_patho_ATN1_FGF14.bed,female,example_data/patho_ATN1_FGF14/4_6_Gregor_Trio/calls_patho_ATN1_FGF14.bam

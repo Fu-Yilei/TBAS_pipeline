@@ -5,17 +5,21 @@ from pathlib import Path
 
 import pytest
 
+from tbas_pipeline import cli
 from tbas_pipeline.pipeline import (
     PipelineSettings,
     TBASPipeline,
+    check_dependencies,
     parse_readgroup_prefix_from_header,
     parse_sample_barcodes,
+    required_tools,
 )
 
 
 class RecordingRunner:
-    def __init__(self) -> None:
+    def __init__(self, dry_run: bool = False) -> None:
         self.commands: list[str] = []
+        self.dry_run = dry_run
 
     def run(self, command: str) -> None:
         self.commands.append(command)
@@ -44,6 +48,49 @@ def test_parse_sample_barcodes() -> None:
     ]
     with pytest.raises(ValueError):
         parse_sample_barcodes("invalid_sample")
+
+
+def test_required_tools_for_stage_subset() -> None:
+    assert required_tools(["demultiplex"]) == ["samtools"]
+    assert required_tools(["kanpig_pileup"]) == ["bedtools", "bgzip", "kanpig", "tabix"]
+    assert "run_clair3.sh" in required_tools(["clair3_local"])
+
+
+def test_check_dependencies_reports_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "tbas_pipeline.pipeline.shutil.which",
+        lambda name: None if name == "kanpig" else f"/usr/bin/{name}",
+    )
+    missing = check_dependencies(["kanpig_pileup", "demultiplex"])
+    assert missing == ["kanpig"]
+
+
+def test_cli_check_deps_flag_returns_nonzero_when_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "manifest.csv"
+    _write_manifest(
+        manifest,
+        [{"sample_id": "4_6_Gregor_Trio", "bed_file": "CMRG", "proband_gender": "female"}],
+    )
+    monkeypatch.setattr("tbas_pipeline.pipeline.shutil.which", lambda name: None)
+    rc = cli.main(
+        ["--manifest", str(manifest), "--stages", "demultiplex", "--check-deps"]
+    )
+    assert rc == 1
+
+
+def test_cli_real_run_aborts_when_tool_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "manifest.csv"
+    _write_manifest(
+        manifest,
+        [{"sample_id": "4_6_Gregor_Trio", "bed_file": "CMRG", "proband_gender": "female"}],
+    )
+    monkeypatch.setattr("tbas_pipeline.pipeline.shutil.which", lambda name: None)
+    rc = cli.main(["--manifest", str(manifest), "--stages", "demultiplex"])
+    assert rc == 1
 
 
 def test_parse_readgroup_prefix_from_header() -> None:
@@ -235,6 +282,61 @@ def test_medaka_local_prefers_tr_bed_file(tmp_path: Path) -> None:
     assert len(runner.commands) == 3
     assert str(custom_tr_bed) in runner.commands[0]
     assert "analysis/tr_regions/adotto_catalog.hg38.lite.CMRG.bed" not in runner.commands[0]
+
+
+def test_medaka_patho_skips_when_no_pheno_loci_in_target(tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+    target_bed = tmp_path / "target.bed"
+    target_bed.write_text("chr22\t42600000\t42740000\tCMRG\n")
+    manifest = tmp_path / "manifest.csv"
+    _write_manifest(
+        manifest,
+        [
+            {
+                "sample_id": "4_6_Gregor_Trio",
+                "bed_file": str(target_bed),
+                "proband_gender": "female",
+            }
+        ],
+    )
+    runner = RecordingRunner()  # dry_run=False; intersect output file never created
+    settings = PipelineSettings(manifest=manifest, output_folder=output_root)
+    pipeline = TBASPipeline.from_manifest(settings, runner=runner)  # type: ignore[arg-type]
+    pipeline.run(["medaka_patho"])
+
+    # Only the intersect runs; with no overlap the stage skips medaka entirely.
+    assert len(runner.commands) == 1
+    assert runner.commands[0].startswith("bedtools intersect -u ")
+    assert not any("medaka tandem" in cmd for cmd in runner.commands)
+
+
+def test_medaka_patho_restricts_pheno_bed_to_target(tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+    target_bed = tmp_path / "target.bed"
+    target_bed.write_text("chr22\t42600000\t42740000\tCMRG\n")
+    manifest = tmp_path / "manifest.csv"
+    _write_manifest(
+        manifest,
+        [
+            {
+                "sample_id": "4_6_Gregor_Trio",
+                "bed_file": str(target_bed),
+                "proband_gender": "female",
+            }
+        ],
+    )
+    runner = RecordingRunner(dry_run=True)  # dry-run assumes intersect produced loci
+    settings = PipelineSettings(manifest=manifest, output_folder=output_root)
+    pipeline = TBASPipeline.from_manifest(settings, runner=runner)  # type: ignore[arg-type]
+    pipeline.run(["medaka_patho"])
+
+    assert runner.commands[0].startswith("bedtools intersect -u ")
+    medaka_cmds = [c for c in runner.commands if "medaka tandem" in c]
+    assert len(medaka_cmds) == 3
+    for cmd in medaka_cmds:
+        assert "pheno_tr_in_target.bed" in cmd
+        # The genome-wide catalog must not be passed directly once restricted.
+        assert "adotto_pheno.bed " not in cmd
 
 
 def test_medaka_local_requires_tr_bed_or_bed(tmp_path: Path) -> None:
